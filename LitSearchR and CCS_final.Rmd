@@ -1,0 +1,150 @@
+---
+title: 'Computational Communication Science Literature - A Brief Quantitative Literature
+  Research'
+author: "Philipp Knoepfle"
+date: '2022-03-15'
+output:
+  html_document: default
+  pdf_document: default
+---
+
+
+#### Summary:
+
+This [R Markdown](http://rmarkdown.rstudio.com) Notebook serves as a quick presentation platform for my experiment with the [LitsearchR](https://elizagrames.github.io/litsearchr/) in the Meta Rep Project. Our sample consist of 371 selected journal articles in the field of Computational Communication Science from 2010-2021. The goal of this brief analysis is to get a better understanding of potential keywords for the manual selection of articles in the second stage of our project as well as to complement our qualitative (and manual) literature research results with an automated literature analysis. As a major tool for this, we employ the [LitsearchR](https://elizagrames.github.io/litsearchr/) package.
+
+## The data
+
+The [LitsearchR](https://elizagrames.github.io/litsearchr/) package requires as a data input a Bibtex-file with author, title, journal, abstract, keyword, reference, etc. information. The more units of reference and the more comprehensive this information in general is, the better will the analysis be. To identify a first set of Computational Communication Science (CCS) journal articles, I perform an advanced reference search via the [Web of Science (WOS)](https://www.webofscience.com/wos/woscc/basic-search) research interface. Our search parameters are: 
+
+* **Search term:** computational, 
+* **WOS Category:** Communication (Core Collection database), 
+* **Time period:** 2010-2021, 
+* **Document Type:** Journal Article. 
+
+Our first search yields 597 journal articles. After a brief manual inspection of this list I noticed that there are still some references which are classified as "journal articles" even though they are clearly contributions in a large handbook. Moreover, some journals are classified as "communication" even though they are not necessarily Communication Science contributions but can be more precisely prescribed to the field of Telecommunication or Information Theory. Even automated literature research can be really messy and always needs manual proofreading of some sort. Since these articles are not interesting for our analysis, I manually exclude them to arrive at a final sample size of 371 articles. This bibtex-file containing the data set for our analysis can be found in my Github repo for this project [Link](https://github.com/Phildizzle/CCSLitSearchR/blob/main/savedrecs.bib).
+
+## LitsearchR analysis
+
+Note: The [LitsearchR](https://elizagrames.github.io/litsearchr/) package has to be downloaded via devtools and Github since it is not on CRAN yet.
+
+```{r, message = FALSE, results = "hide", warning = FALSE}
+# Load packages, setwd and import the data set
+library("igraph")
+library("ggraph")
+library("litsearchr")
+library("dplyr")
+library("wordcloud")
+library("tibble")
+
+setwd("H:\\Meta-Rep\\R Code")
+naive_results <- import_results(file="savedrecs.bib")
+```
+
+First, let us see what our data set looks like. It contains 371 CCS references, i.e. journal articles, and has 42 different categories.
+
+```{r}
+dim(naive_results)
+```
+
+Our bib-file categories/columns include: type, title, abstract, keywords, the International Standard Serial Number (ISSN), WOS Core Collection category, cited references, and many others. A lot of very useful information for the next steps of our analysis.
+
+```{r}
+colnames(naive_results)
+```
+
+Now let us dive into the actual analysis and look at the keywords in our current data set. Unfortunately, 52 articles in our data set do not have keywords but that should not be a problem since we can easily infer keywords from the article abstract and title. The `method` argument specifies the type of keyword extraction method which is used to obtain the keywords. "Tagged" gives us simply the author-tagged keywords from the bib-file, whereas "Fakerake" is a quick implementation of the Rapid Automatic Keyword Extraction (RAKE) algorithm, which is a domain-independent keyword extraction algorithm, see [link](https://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.657.8134&rep=rep1&type=pdf). The idea behind this is, that if a keyword co-occurs often, it's information value in a literature search is high which qualifies it as an important keyword in our literature search. 
+
+Note: However, it is important to note, that keywords which do not co-occur often are crucial to identify meaningful studies in our analysis and still have to be taken into consideration. Even studies which are not well connected to other literature can be meaningful and relevant to our analysis. 
+
+```{r}
+sum(is.na(naive_results[, "keywords"]))
+
+keywords <- extract_terms(keywords=naive_results[, "keywords"], method="tagged")
+
+Keywords_abstr <- extract_terms(text=naive_results[, "abstract"], method="fakerake", min_freq=3, min_n=2)
+
+Keywords_title <- extract_terms(text=naive_results[, "title"], method="fakerake", min_freq=3, min_n=2)
+
+```
+
+A first look at the author-tagged keywords reveals a lot of expected CCS keywords. More interestingly though, is the sheer quantity and variety of keywords. Of course, there is a large variety in the type of study and methodology, yet the inconsistency in keywords is surprising.
+
+```{r}
+extract_terms(keywords=naive_results[, "keywords"], method="tagged")
+```
+
+Aside from this, we can combine the author-tagged keywords and the "Fakerake"-derived keywords to get a comprehensive list of keywords and create a simple co-occurrence network in the form of a weighted graph based on the co-occurrence frequency of our comprehensive keyword list and the abstract and title of each paper. In simple terms, we look how often a keyword co-occurs with other keywords in the abstract and title. If they co-occur frequently, they are rated closer and vice-versa. 
+
+```{r}
+terms <- unique(c(keywords, Keywords_title))
+
+docs <- paste(naive_results[, "title"], naive_results[, "abstract"])
+
+dfm <- create_dfm(elements=docs, features=terms)
+
+g <- create_network(dfm, min_studies=3)
+```
+
+We can plot our results in a nice graph.
+
+```{r}
+ggraph(g, layout="stress") +
+  coord_fixed() +
+  expand_limits(x=c(-3, 3)) +
+  geom_edge_link(aes(alpha=weight)) +
+  geom_node_point(shape="circle filled", fill="white") +
+  geom_node_text(aes(label=name), hjust="outward", check_overlap=TRUE) +
+  guides(edge_alpha="none")
+```
+
+Judging by a first look, there seems to be a certain set of keywords which form a tight core in the middle of the graph. This core looks almost like a polyhedral cube. We can keep this in mind for a later analysis. The outer aura of the graph is dominated by political CommSci terms, such as political communication, affective polarization, computational propaganda, etc. This could merely be a product of the visualization. Methods are also relatively prevalent in our graph, e.g. automated content analysis, computational analysis, computational text analysis, computational content analysis, computer vision, etc. All in all, it's safe to say that the graph can give us a lot of impulses to think about when it comes to the identification and selection of keywords.
+
+In a next step, we can look at the interior of the core and see which connections between keywords are the strongest. I use the  `strength`-function of the `igraph`-package which sums up the edge weights for each vertex and plot our results in a ranked chart.
+
+```{r}
+strengths <- strength(g)
+
+# create ordered data frame for the plot
+data.frame(term=names(strengths), strength=strengths, row.names=NULL) %>%
+  mutate(rank=rank(strength, ties.method="min")) %>%
+  arrange(strength) ->
+  term_strengths
+
+ggplot(term_strengths, aes(x=rank, y=strength, label=term)) +
+  geom_line() +
+  geom_point() +
+  geom_text(data=filter(term_strengths, rank>5), hjust="right", nudge_y=20, check_overlap=TRUE)
+```
+
+Next is the chart above in a ranked order as a list. A high strength value indicates a strong connection of a keyword to others. The first and second page of keywords exhibit high strength values after which the keyword co-occurrence drops relatively sharp Interestingly enough, page one and two contain a variety of different keywords. Naturally, social media is on top of the list. Methods descriptions such as, automated/computational text analysis, automated content, supervised/unsupervised machine learning, network analysis, etc. are relatively frequent. Yet, terms such as "news media", "online news", "data journalism", "big data", "political communication", etc. seem really important as well. This list should definitely spark an interesting discussion about keywords in our project.
+
+```{r}
+# change to decreasing order for better interpretation
+rev_df <- term_strengths[rev(rownames(df)),]
+rev_df 
+```
+
+## Wordcloud
+
+To round up our analysis in a pleasing visual manner, I created a word cloud with the most important topics based once again on the strength, i.e. co-occurrence.
+
+```{r, message = FALSE, warning = FALSE}
+strengths <- strength(g)
+df <- as.data.frame(strengths)
+
+df <- strengths %>% as_tibble()
+df <- add_column(df,names(strengths))
+
+wordcloud(words = df$`names(strengths)`, freq = df$value, min.freq = 10,
+          max.words=200, random.order=FALSE, rot.per=0.35,
+          colors=brewer.pal(8, "Dark2"))
+```
+
+## Conclusion
+
+Both the graph and ordered list of keyword importance are a really interesting contribution to our keyword discussion.
+
+I also performed this analysis with the comprehensive keyword list comprising of author-tagged keywords and "Fakerake" keywords derived from both the abstract and title. The results are relatively similar, which is why I spared you with them in this Markdown-file. In case you are interested in the latter analysis, I can gladly share them of course.
+
+End of this document.
